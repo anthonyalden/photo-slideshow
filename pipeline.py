@@ -49,10 +49,11 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
     photos = query_photos(spec, limit=limit)
 
     if not photos:
-        # Fallback 1: replace places (needs GPS) with album/keyword substring
-        # matches using the prompt words — handles trips without location data.
+        # Fallback: replace places (needs GPS) with album/keyword substring
+        # matches using the prompt words, then text-search, then (if vision is
+        # on) a broad pool for Claude to curate visually.
         progress("🔎\u207b")
-        photos = _fallback_query(spec, limit, prompt)
+        photos = _fallback_query(spec, limit, prompt, visual_curation=visual_curation)
 
     if not photos:
         import json as _json
@@ -109,36 +110,44 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
 
 # --------------------------------------------------------------------- query
 
-def _fallback_query(spec: dict, limit: int, prompt: str) -> list:
+def _fallback_query(spec: dict, limit: int, prompt: str, visual_curation: bool = False) -> list:
     """
-    When the strict spec returns nothing, try two progressively looser strategies:
+    When the strict spec returns nothing, try progressively looser strategies:
 
-    1. Replace places (requires GPS) with album + keyword substring searches
-       using the significant words from the user’s prompt.
-    2. If still nothing, load all photos in the date range (or everything) and
-       do a text post-filter against each photo’s place/keyword/album metadata.
+    1. Keyword-only OR album-only search using prompt words (separate queries,
+       merged — avoids the osxphotos AND-between-fields trap).
+    2. Text-search photo metadata; only return photos that scored > 0.
+    3. If visual_curation is on, return a broad candidate pool and let Claude
+       vision identify matches from thumbnails (e.g. for untagged sunsets).
     """
     words = [w.lower().strip(".,!?") for w in prompt.split() if len(w) >= 3]
 
-    # Strategy 1: album + keyword substring match on prompt words, keep dates
+    # Strategy 1: keyword OR album substring match — run separately and merge.
     if words:
-        s1 = {
-            "date_range": spec.get("date_range"),
-            "albums":     words,
-            "keywords":   words,
-            "persons":    spec.get("persons"),
-            "places":     None,
+        base = {
+            "date_range":  spec.get("date_range"),
+            "persons":     spec.get("persons"),
+            "places":      None,
             "favorites_only": False,
-            "has_gps":    None,
+            "has_gps":     None,
             "orientation": spec.get("orientation"),
-            "media_type": spec.get("media_type", "any"),
+            "media_type":  spec.get("media_type", "any"),
             "limit_candidates": limit,
         }
-        photos = query_photos(s1, limit=limit)
-        if photos:
-            return photos
+        kw_photos = query_photos({**base, "keywords": words, "albums": None}, limit=limit)
+        al_photos = query_photos({**base, "keywords": None, "albums": words}, limit=limit)
+        # Merge, deduplicate by UUID, preserve chronological order.
+        seen: set = set()
+        merged = []
+        for p in kw_photos + al_photos:
+            if p.uuid not in seen:
+                seen.add(p.uuid)
+                merged.append(p)
+        merged.sort(key=lambda p: (p.date or _dt.datetime.min))
+        if merged:
+            return merged[:limit]
 
-    # Strategy 2: load date-range candidates and text-search metadata
+    # Strategy 2: text-search photo metadata — only return actual matches.
     s2 = {
         "date_range": spec.get("date_range"),
         "favorites_only": False,
@@ -149,14 +158,13 @@ def _fallback_query(spec: dict, limit: int, prompt: str) -> list:
     }
     candidates = query_photos(s2, limit=400)
     if not candidates or not words:
-        return candidates[:limit]
+        return []
 
     def _text_of(p) -> str:
         parts = []
         if getattr(p, "place", None) and p.place:
             parts.append(p.place.name or "")
         parts.extend(str(k) for k in (p.keywords or []))
-        # p.albums may return strings or AlbumInfo objects depending on version
         for a in (p.albums or []):
             parts.append(a if isinstance(a, str) else getattr(a, "title", "") or "")
         parts.append(p.filename or "")
@@ -164,8 +172,18 @@ def _fallback_query(spec: dict, limit: int, prompt: str) -> list:
 
     scored = [(sum(w in _text_of(p) for w in words), p) for p in candidates]
     scored.sort(key=lambda x: -x[0])
+    # Only return photos that actually scored — never dump unrelated photos.
     matched = [p for score, p in scored if score > 0]
-    return (matched or candidates)[:limit]
+    if matched:
+        return matched[:limit]
+
+    # Strategy 3: visual curation fallback — return a broad recent pool and let
+    # Claude vision find the matches from thumbnails (works for untagged subjects
+    # like "sunset" where no metadata exists but the images are visually distinct).
+    if visual_curation:
+        return candidates[:limit]  # candidates already loaded above
+
+    return []
 
 
 def query_photos(spec: dict, limit: int) -> list:
