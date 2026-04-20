@@ -133,7 +133,13 @@ def main() -> None:
 
     scan_mode_var = tk.StringVar(value="count")
 
-    # Row 0: date range radio + fields
+    # Row 0: date range radio + date pickers
+    try:
+        from tkcalendar import DateEntry as _DateEntry
+        _HAS_CAL = True
+    except ImportError:
+        _HAS_CAL = False
+
     ttk.Radiobutton(
         scan_frame, text="Limit by date range",
         variable=scan_mode_var, value="date_range",
@@ -142,16 +148,57 @@ def main() -> None:
 
     date_row = ttk.Frame(scan_frame)
     date_row.grid(row=0, column=1, sticky="w", pady=4, padx=(8, 0))
-    ttk.Label(date_row, text="From:").pack(side="left")
-    scan_start_var = tk.StringVar()
-    scan_start_entry = ttk.Entry(date_row, textvariable=scan_start_var, width=12)
-    scan_start_entry.pack(side="left", padx=(4, 8))
-    ttk.Label(date_row, text="To:").pack(side="left")
-    scan_end_var = tk.StringVar()
-    scan_end_entry = ttk.Entry(date_row, textvariable=scan_end_var, width=12)
-    scan_end_entry.pack(side="left", padx=(4, 0))
-    ttk.Label(date_row, text="(YYYY-MM-DD, leave blank for open range)",
-              foreground="#888").pack(side="left", padx=(8, 0))
+
+    # "From" end — checkbox + date picker
+    use_start_var = tk.BooleanVar(value=False)
+    use_start_chk = ttk.Checkbutton(date_row, text="From:", variable=use_start_var,
+                                    command=lambda: _toggle_date_ends())
+    use_start_chk.pack(side="left")
+    if _HAS_CAL:
+        scan_start_picker = _DateEntry(date_row, date_pattern="yyyy-mm-dd", width=12,
+                                       state="disabled", background="#4a90d9",
+                                       foreground="white", borderwidth=2)
+        scan_start_picker.pack(side="left", padx=(4, 12))
+        scan_start_var = None  # value read via scan_start_picker.get()
+    else:
+        scan_start_var = tk.StringVar()
+        scan_start_picker = ttk.Entry(date_row, textvariable=scan_start_var,
+                                      width=12, state="disabled")
+        scan_start_picker.pack(side="left", padx=(4, 12))
+
+    # "To" end — checkbox + date picker
+    use_end_var = tk.BooleanVar(value=True)
+    use_end_chk = ttk.Checkbutton(date_row, text="To:", variable=use_end_var,
+                                  command=lambda: _toggle_date_ends())
+    use_end_chk.pack(side="left")
+    if _HAS_CAL:
+        import datetime as _dt_dlg
+        scan_end_picker = _DateEntry(date_row, date_pattern="yyyy-mm-dd", width=12,
+                                     background="#4a90d9", foreground="white",
+                                     borderwidth=2)
+        scan_end_picker.set_date(_dt_dlg.date.today())
+        scan_end_picker.pack(side="left", padx=(4, 0))
+        scan_end_var = None
+    else:
+        scan_end_var = tk.StringVar()
+        scan_end_picker = ttk.Entry(date_row, textvariable=scan_end_var, width=12)
+        scan_end_picker.pack(side="left", padx=(4, 0))
+
+    ttk.Label(date_row, text="(uncheck to leave that end open)",
+              foreground="#888").pack(side="left", padx=(10, 0))
+
+    def _get_date_str(picker, str_var) -> str | None:
+        """Return ISO date string from either a DateEntry or Entry widget."""
+        if _HAS_CAL:
+            return picker.get_date().isoformat()
+        val = str_var.get().strip()
+        return val or None
+
+    def _toggle_date_ends() -> None:
+        s = "normal" if use_start_var.get() else "disabled"
+        e = "normal" if use_end_var.get() else "disabled"
+        scan_start_picker.config(state=s)
+        scan_end_picker.config(state=e)
 
     # Row 1: photo count radio + spinbox
     ttk.Radiobutton(
@@ -178,10 +225,17 @@ def main() -> None:
 
     def _toggle_scan_mode() -> None:
         mode = scan_mode_var.get()
-        date_state = "normal" if mode == "date_range" else "disabled"
-        count_state = "normal" if mode == "count" else "disabled"
-        scan_start_entry.config(state=date_state)
-        scan_end_entry.config(state=date_state)
+        is_date = mode == "date_range"
+        count_state = "normal" if not is_date else "disabled"
+        # Date-end widgets follow their own checkboxes when date mode is active.
+        chk_state = "normal" if is_date else "disabled"
+        use_start_chk.config(state=chk_state)
+        use_end_chk.config(state=chk_state)
+        if is_date:
+            _toggle_date_ends()
+        else:
+            scan_start_picker.config(state="disabled")
+            scan_end_picker.config(state="disabled")
         scan_count_spin.config(state=count_state)
         random_check.config(state=count_state)
 
@@ -287,8 +341,10 @@ def main() -> None:
             params["_filter_spec"] = filter_spec
         if scan_mode_var.get() == "date_range":
             params["scan_date_range"] = {
-                "start": scan_start_var.get().strip() or None,
-                "end":   scan_end_var.get().strip() or None,
+                "start": _get_date_str(scan_start_picker, scan_start_var)
+                         if use_start_var.get() else None,
+                "end":   _get_date_str(scan_end_picker, scan_end_var)
+                         if use_end_var.get() else None,
             }
         else:
             params["scan_limit"] = int(scan_count_var.get())

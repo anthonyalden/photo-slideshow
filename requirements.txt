@@ -3,3 +3,4 @@ osxphotos>=0.69.0
 rumps>=0.4.0
 Pillow>=10.0.0
 python-pptx>=0.6.21
+tkcalendar>=1.6.1
