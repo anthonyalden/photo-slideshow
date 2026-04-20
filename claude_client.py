@@ -175,13 +175,24 @@ def curate_photos(
 # --------------------------------------------------------------- helpers
 
 def _parse_json_loose(text: str) -> dict:
-    """Accept JSON possibly wrapped in ```json fences."""
+    """Parse JSON that may be wrapped in ```json fences or followed by extra text."""
     t = text.strip()
+
+    # Strip ```json ... ``` fences if present.
     if t.startswith("```"):
         t = t.strip("`")
-        # remove optional leading 'json\n'
         if t.lower().startswith("json"):
             t = t[4:].lstrip("\n")
-        # drop trailing fence remnants
         t = t.rstrip("`").strip()
-    return json.loads(t)
+
+    # Use raw_decode so any trailing prose after the JSON object is ignored.
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(t)
+        return obj
+    except json.JSONDecodeError:
+        # Last resort: find the first { ... } block and parse that.
+        start = t.find("{")
+        end = t.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(t[start : end + 1])
+        raise
