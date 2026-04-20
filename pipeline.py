@@ -44,8 +44,23 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
 
     # ---- 2. Query Photos library ------------------------------------------
     progress("🔎")
-    limit = int(spec.get("limit_candidates") or max_photos * 4)
-    limit = min(max(limit, max_photos), 400)
+
+    # Determine scan limit from user choice in dialog.
+    if params.get("scan_mode") == "date_range":
+        # User chose a date range — override the Claude-generated date_range and
+        # scan every photo in that window (no count cap).
+        dr = params.get("scan_date_range") or {}
+        if dr.get("start") or dr.get("end"):
+            spec["date_range"] = dr
+        limit = 50_000  # effectively unlimited within the date range
+    elif params.get("scan_mode") == "count":
+        # User set an explicit photo count to scan.
+        limit = max(int(params.get("scan_limit", 400)), max_photos)
+    else:
+        # Legacy / CLI default: Claude's limit_candidates, capped at 400.
+        limit = int(spec.get("limit_candidates") or max_photos * 4)
+        limit = min(max(limit, max_photos), 400)
+
     photos = query_photos(spec, limit=limit)
 
     if not photos:

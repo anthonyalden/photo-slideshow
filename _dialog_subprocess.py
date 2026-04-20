@@ -126,6 +126,60 @@ def main() -> None:
         variable=visual_var,
     ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 2))
 
+    # ── SCAN LIMIT ────────────────────────────────────────────────────────────
+    scan_frame = ttk.LabelFrame(outer, text="Scan Limit", padding=8)
+    scan_frame.pack(fill="x", pady=(10, 0))
+    scan_frame.columnconfigure(1, weight=1)
+
+    scan_mode_var = tk.StringVar(value="count")
+
+    # Row 0: date range radio + fields
+    ttk.Radiobutton(
+        scan_frame, text="Limit by date range",
+        variable=scan_mode_var, value="date_range",
+        command=lambda: _toggle_scan_mode(),
+    ).grid(row=0, column=0, sticky="w", pady=4)
+
+    date_row = ttk.Frame(scan_frame)
+    date_row.grid(row=0, column=1, sticky="w", pady=4, padx=(8, 0))
+    ttk.Label(date_row, text="From:").pack(side="left")
+    scan_start_var = tk.StringVar()
+    scan_start_entry = ttk.Entry(date_row, textvariable=scan_start_var, width=12)
+    scan_start_entry.pack(side="left", padx=(4, 8))
+    ttk.Label(date_row, text="To:").pack(side="left")
+    scan_end_var = tk.StringVar()
+    scan_end_entry = ttk.Entry(date_row, textvariable=scan_end_var, width=12)
+    scan_end_entry.pack(side="left", padx=(4, 0))
+    ttk.Label(date_row, text="(YYYY-MM-DD, leave blank for open range)",
+              foreground="#888").pack(side="left", padx=(8, 0))
+
+    # Row 1: photo count radio + spinbox
+    ttk.Radiobutton(
+        scan_frame, text="Limit by number of photos to scan",
+        variable=scan_mode_var, value="count",
+        command=lambda: _toggle_scan_mode(),
+    ).grid(row=1, column=0, sticky="w", pady=4)
+
+    count_row = ttk.Frame(scan_frame)
+    count_row.grid(row=1, column=1, sticky="w", pady=4, padx=(8, 0))
+    scan_count_var = tk.IntVar(value=400)
+    scan_count_spin = ttk.Spinbox(count_row, from_=10, to=50000,
+                                  textvariable=scan_count_var, width=8)
+    scan_count_spin.pack(side="left")
+    ttk.Label(count_row, text="photos from library", foreground="#888").pack(
+        side="left", padx=(8, 0)
+    )
+
+    def _toggle_scan_mode() -> None:
+        mode = scan_mode_var.get()
+        date_state = "normal" if mode == "date_range" else "disabled"
+        count_state = "normal" if mode == "count" else "disabled"
+        scan_start_entry.config(state=date_state)
+        scan_end_entry.config(state=date_state)
+        scan_count_spin.config(state=count_state)
+
+    _toggle_scan_mode()  # set initial state
+
     # ── SEPARATOR ─────────────────────────────────────────────────────────────
     ttk.Separator(outer, orient="horizontal").pack(fill="x", pady=10)
 
@@ -220,9 +274,17 @@ def main() -> None:
             "format": LABEL_TO_KEY.get(fmt_var.get(), "mp4"),
             "max_photos": int(max_var.get()),
             "visual_curation": bool(visual_var.get()),
+            "scan_mode": scan_mode_var.get(),
         }
         if filter_spec is not None:
             params["_filter_spec"] = filter_spec
+        if scan_mode_var.get() == "date_range":
+            params["scan_date_range"] = {
+                "start": scan_start_var.get().strip() or None,
+                "end":   scan_end_var.get().strip() or None,
+            }
+        else:
+            params["scan_limit"] = int(scan_count_var.get())
 
         result.update(params)
         root.destroy()
