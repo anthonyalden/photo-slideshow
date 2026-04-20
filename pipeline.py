@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
+import random as _random
 import shutil
 import tempfile
 from pathlib import Path
@@ -55,13 +56,22 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
         limit = 50_000  # effectively unlimited within the date range
     elif params.get("scan_mode") == "count":
         # User set an explicit photo count to scan.
+        # If Random is on, query the full library then sample; otherwise use limit directly.
         limit = max(int(params.get("scan_limit", 400)), max_photos)
+        if params.get("random_sample"):
+            limit = 50_000  # fetch all matches, sample below
     else:
         # Legacy / CLI default: Claude's limit_candidates, capped at 400.
         limit = int(spec.get("limit_candidates") or max_photos * 4)
         limit = min(max(limit, max_photos), 400)
 
     photos = query_photos(spec, limit=limit)
+
+    # Random sampling: shuffle and trim to the user's chosen count.
+    if params.get("random_sample") and photos:
+        scan_limit = max(int(params.get("scan_limit", 400)), max_photos)
+        _random.shuffle(photos)
+        photos = photos[:scan_limit]
 
     if not photos:
         # Fallback: replace places (needs GPS) with album/keyword substring

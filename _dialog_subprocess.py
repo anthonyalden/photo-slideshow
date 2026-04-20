@@ -169,6 +169,12 @@ def main() -> None:
     ttk.Label(count_row, text="photos from library", foreground="#888").pack(
         side="left", padx=(8, 0)
     )
+    random_var = tk.BooleanVar(value=False)
+    random_check = ttk.Checkbutton(
+        count_row, text="Random",
+        variable=random_var,
+    )
+    random_check.pack(side="left", padx=(12, 0))
 
     def _toggle_scan_mode() -> None:
         mode = scan_mode_var.get()
@@ -177,6 +183,7 @@ def main() -> None:
         scan_start_entry.config(state=date_state)
         scan_end_entry.config(state=date_state)
         scan_count_spin.config(state=count_state)
+        random_check.config(state=count_state)
 
     _toggle_scan_mode()  # set initial state
 
@@ -285,6 +292,7 @@ def main() -> None:
             }
         else:
             params["scan_limit"] = int(scan_count_var.get())
+            params["random_sample"] = bool(random_var.get())
 
         result.update(params)
         root.destroy()
