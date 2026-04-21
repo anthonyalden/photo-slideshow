@@ -111,6 +111,18 @@ class _DatePicker(ttk.Frame):
             month=self._date.month,
             day=self._date.day,
             date_pattern="yyyy-mm-dd",
+            # Explicit colours so month/year header is readable on macOS
+            background="white",
+            foreground="black",
+            headersbackground="#e0e0e0",
+            headersforeground="black",
+            normalbackground="white",
+            normalforeground="black",
+            weekendbackground="white",
+            weekendforeground="#555",
+            othermonthforeground="#aaa",
+            selectbackground="#4a90d9",
+            selectforeground="white",
         )
         cal.pack(padx=12, pady=12)
 
@@ -258,18 +270,10 @@ def main() -> None:
     ttk.Label(count_row, text="photos from library", foreground="#888").pack(
         side="left", padx=(8, 0)
     )
-    random_var = tk.BooleanVar(value=False)
-    random_check = ttk.Checkbutton(
-        count_row, text="Random",
-        variable=random_var,
-    )
-    random_check.pack(side="left", padx=(12, 0))
-
     def _toggle_scan_mode() -> None:
         mode = scan_mode_var.get()
         is_date = mode == "date_range"
         count_state = "normal" if not is_date else "disabled"
-        # Date-end widgets follow their own checkboxes when date mode is active.
         chk_state = "normal" if is_date else "disabled"
         use_start_chk.config(state=chk_state)
         use_end_chk.config(state=chk_state)
@@ -279,9 +283,23 @@ def main() -> None:
             scan_start_picker.config(state="disabled")
             scan_end_picker.config(state="disabled")
         scan_count_spin.config(state=count_state)
-        random_check.config(state=count_state)
 
     _toggle_scan_mode()  # set initial state
+
+    # Row 2: Random — available for both scan modes
+    random_row = ttk.Frame(scan_frame)
+    random_row.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 2), padx=(0, 0))
+    random_var = tk.BooleanVar(value=False)
+    random_check = ttk.Checkbutton(
+        random_row, text="Random — randomly pick",
+        variable=random_var,
+    )
+    random_check.pack(side="left")
+    random_pick_var = tk.IntVar(value=400)
+    ttk.Spinbox(random_row, from_=10, to=50000,
+                textvariable=random_pick_var, width=8).pack(side="left", padx=(6, 4))
+    ttk.Label(random_row, text="photos from matching results",
+              foreground="#888").pack(side="left")
 
     # ── SEPARATOR ─────────────────────────────────────────────────────────────
     ttk.Separator(outer, orient="horizontal").pack(fill="x", pady=10)
@@ -381,6 +399,10 @@ def main() -> None:
         }
         if filter_spec is not None:
             params["_filter_spec"] = filter_spec
+        # Random is available for both modes
+        params["random_sample"] = bool(random_var.get())
+        params["random_pick_count"] = int(random_pick_var.get())
+
         if scan_mode_var.get() == "date_range":
             params["scan_date_range"] = {
                 "start": scan_start_picker.get_date().isoformat()
@@ -390,7 +412,6 @@ def main() -> None:
             }
         else:
             params["scan_limit"] = int(scan_count_var.get())
-            params["random_sample"] = bool(random_var.get())
 
         result.update(params)
         root.destroy()
