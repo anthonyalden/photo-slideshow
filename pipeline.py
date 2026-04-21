@@ -48,18 +48,18 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
 
     # Determine scan limit from user choice in dialog.
     if params.get("scan_mode") == "date_range":
-        # User chose a date range — override the Claude-generated date_range and
-        # scan every photo in that window (no count cap).
+        # User chose a date range — override the Claude-generated date_range.
         dr = params.get("scan_date_range") or {}
         if dr.get("start") or dr.get("end"):
             spec["date_range"] = dr
-        limit = 50_000  # effectively unlimited within the date range
+        # Always fetch everything in the range; random pick (if on) trims after.
+        limit = 50_000
     elif params.get("scan_mode") == "count":
-        # User set an explicit photo count to scan.
-        # If Random is on, query the full library then sample; otherwise use limit directly.
+        # Explicit photo count to scan. If random, fetch 50k first so the
+        # shuffle is truly random across all matches, not just the first N.
         limit = max(int(params.get("scan_limit", 400)), max_photos)
         if params.get("random_sample"):
-            limit = 50_000  # fetch all matches, sample below
+            limit = 50_000
     else:
         # Legacy / CLI default: Claude's limit_candidates, capped at 400.
         limit = int(spec.get("limit_candidates") or max_photos * 4)
@@ -67,11 +67,17 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
 
     photos = query_photos(spec, limit=limit)
 
-    # Random sampling: shuffle and trim to the user's chosen count.
+    # Random sampling — only shuffles photos that already matched the filter;
+    # never injects unrelated photos. Trims to random_pick_count (or scan_limit
+    # for count mode, falling back to 400).
     if params.get("random_sample") and photos:
-        scan_limit = max(int(params.get("scan_limit", 400)), max_photos)
+        pick = max(
+            int(params.get("random_pick_count",
+                           params.get("scan_limit", 400))),
+            max_photos,
+        )
         _random.shuffle(photos)
-        photos = photos[:scan_limit]
+        photos = photos[:pick]
 
     if not photos:
         # Fallback: replace places (needs GPS) with album/keyword substring

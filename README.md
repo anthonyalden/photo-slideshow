@@ -162,6 +162,27 @@ Assuming 40-photo output from ~160 candidates:
 - Menu bar apps inherit the environment of the shell they're launched from;
   if you launch from Finder, set the key in `~/.zprofile` (login shells).
 
+## Testing
+
+Run the test suite (no API key or Photos library required — all external calls are mocked):
+
+```bash
+source .venv/bin/activate
+python test_slideshow.py
+```
+
+19 tests across three classes:
+
+- **`TestDatePicker`** (7 tests) — `_DatePicker` widget: default and custom dates, ISO
+  display string, enable/disable state, Jan-1 default for the From picker.
+- **`TestParseJsonLoose`** (5 tests) — `_parse_json_loose`: clean JSON, trailing prose
+  after the object, multiple JSON objects in one response, code-fenced JSON,
+  realistic filter spec shape.
+- **`TestPipelineScanModes`** (7 tests) — `run_pipeline` scan limit logic: date range
+  patches the spec and sets limit to 50,000; count mode uses `scan_limit`; minimum
+  clamp to `max_photos`; legacy default cap of 400; `random_sample` flag; open-ended
+  date range (both ends `None`).
+
 ## File layout
 
 ```
@@ -173,6 +194,7 @@ photo_slideshow/
 ├── pipeline.py              # orchestrator: filter → query → curate → generate
 ├── claude_client.py         # Anthropic API wrappers
 ├── generators.py            # mp4 / pptx / html / album
+├── test_slideshow.py        # unit + integration test suite
 ├── requirements.txt
 ├── install.sh
 └── README.md
