@@ -96,25 +96,33 @@ slideshow presentation.
 
 Your work has TWO PHASES — do them in order:
 
-PHASE 1 — EXAMINE
-Before selecting anything, review every single photo provided. For each one assess:
+PHASE 1 — EXAMINE ALL PHOTOS
+Before selecting anything, review every single photo. For each one note:
   • Composition — framing, rule of thirds, leading lines, horizon level, clutter
   • Exposure — brightness, contrast, shadow/highlight detail, colour accuracy
-  • Sharpness — focus on the main subject; motion blur that hurts the image
-  • Content — does it clearly relate to the slideshow subject?
-  • Duplicates — flag near-duplicates (same scene / moment / composition);
-    keep a mental note of which is the strongest of each group
+  • Sharpness — focus on the main subject; motion blur that degrades the image
+  • Content relevance — does it clearly relate to the slideshow subject?
+  • People — note every photo that contains a person, portrait, or human subject
+  • Scene group — each record has a scene_group field (integer or null).
+    Photos sharing the same scene_group integer are CONFIRMED near-duplicates:
+    burst sequences from Mac Photos, or shots taken within seconds at the same
+    GPS location. You MUST select at most ONE photo from each scene_group.
 
 PHASE 2 — SELECT
-After examining everything, choose the best photos and arrange them for the
-slideshow. Rules:
-  • Eliminate near-duplicates — include only the single best from each group
-  • Rank by technical quality first (sharp, well-exposed, well-composed)
-  • Match the slideshow subject and the user’s stated intent
-  • Create narrative flow: wide/establishing shots → details → people →
-    action → atmosphere → closing shot
-  • Aim for variety — avoid consecutive shots that look too similar
-  • Hit the target count; return fewer only if not enough strong matches exist
+Apply these rules strictly:
+  1. DUPLICATES: For every scene_group, keep ONLY the single best photo
+     (sharpest focus + best exposure + strongest composition). Discard the rest.
+  2. PEOPLE: The final selection MUST include people/portrait shots if any exist
+     in the candidates. Human subjects add warmth and story to slideshows.
+  3. QUALITY: Among non-duplicate candidates, rank by technical quality:
+     sharpness, correct exposure, clean composition.
+  4. VARIETY IN ORDER: Arrange so no two consecutive photos share the same
+     scene_group, location, or visual theme. Interleave landscapes, people,
+     details, and action shots.
+  5. NARRATIVE FLOW: wide/establishing → details → people → action →
+     atmosphere → strong closing shot.
+  6. COUNT: Aim for the target count; return fewer only if not enough
+     high-quality, non-duplicate candidates exist.
 
 Return ONLY a JSON object — no prose, no markdown fences:
 {"selected_uuids": [string], "rationale": string}

@@ -103,8 +103,10 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
     thumb_dir = Path(tempfile.mkdtemp(prefix="slideshow_thumbs_"))
     try:
         records = _build_candidate_records(photos, thumb_dir, make_thumbs=visual_curation)
+        # Tag near-duplicate groups so Claude knows which photos are burst/sequential.
+        _add_scene_groups(records)
 
-        # ---- 4. Curate -----------------------------------------------------
+        # ---- 4. Curate
         progress("🎨")
         if len(records) <= max_photos:
             # Nothing to curate down to; chronological order.
@@ -281,6 +283,102 @@ def _matches_orientation(p, orientation: str) -> bool:
     return True
 
 
+# ------------------------------------------------- scene / duplicate groups
+
+def _add_scene_groups(records: list[dict]) -> None:
+    """
+    Annotate each record with a scene_group integer (or None) so Claude knows
+    which photos are near-duplicates and should contribute at most ONE photo:
+
+    Group criteria (either is sufficient):
+      1. Same burst_uuid from Mac Photos (definitive burst sequence).
+      2. Taken within 10 seconds of a neighbouring photo AND GPS within ~100m
+         (rapid-fire shots at the same location).
+      3. Within 5 seconds of a neighbour with no GPS (burst-like timing alone).
+    """
+    def _dt(r):
+        d = r.get("date")
+        try:
+            return _dt.datetime.fromisoformat(d) if d else None
+        except Exception:
+            return None
+
+    # Re-use the module-level alias
+    def _parse(d):
+        try:
+            return _dt_parse(d) if d else None
+        except Exception:
+            return None
+
+    import datetime as _dt2  # local alias to avoid shadowing the module
+
+    def _parse_dt(d):
+        try:
+            return _dt2.datetime.fromisoformat(d) if d else None
+        except Exception:
+            return None
+
+    def _geo_close(a, b):
+        if not (a and b):
+            return False
+        return abs(a["lat"] - b["lat"]) < 0.001 and abs(a["lon"] - b["lon"]) < 0.001
+
+    # Sort chronologically for time-proximity checks
+    sorted_recs = sorted(records, key=lambda r: _parse_dt(r.get("date")) or _dt2.datetime.min)
+
+    group_counter = 0
+    burst_to_group: dict = {}
+    uuid_to_group: dict = {}
+
+    # Pass 1: burst_uuid groups (most reliable signal)
+    for r in sorted_recs:
+        b = r.get("burst_uuid")
+        if b:
+            if b not in burst_to_group:
+                burst_to_group[b] = group_counter
+                group_counter += 1
+            uuid_to_group[r["uuid"]] = burst_to_group[b]
+
+    # Pass 2: time + geo proximity for non-burst photos
+    prev_dt = None
+    prev_gps = None
+    prev_uuid = None
+
+    for r in sorted_recs:
+        if r["uuid"] in uuid_to_group:
+            # Reset the time chain when we hit a burst photo
+            prev_dt = prev_gps = prev_uuid = None
+            continue
+
+        curr_dt = _parse_dt(r.get("date"))
+        curr_gps = r.get("gps")
+
+        if curr_dt and prev_dt:
+            secs = (curr_dt - prev_dt).total_seconds()
+            close_time = secs <= 10
+            close_geo = _geo_close(curr_gps, prev_gps)
+            burst_like = secs <= 5  # within 5s is burst-like even without GPS
+
+            if close_time and (close_geo or burst_like):
+                # Assign both to the same group
+                if prev_uuid and prev_uuid not in uuid_to_group:
+                    uuid_to_group[prev_uuid] = group_counter
+                    group_counter += 1
+                uuid_to_group[r["uuid"]] = uuid_to_group.get(prev_uuid, group_counter - 1)
+                prev_dt = curr_dt
+                prev_gps = curr_gps
+                prev_uuid = r["uuid"]
+                continue
+
+        prev_dt = curr_dt
+        prev_gps = curr_gps
+        prev_uuid = r["uuid"]
+
+    # Apply back to original records
+    for r in records:
+        r["scene_group"] = uuid_to_group.get(r["uuid"])
+
+
 # ------------------------------------------------------- candidate records
 
 def _build_candidate_records(photos: list, thumb_dir: Path, make_thumbs: bool) -> list[dict]:
@@ -317,6 +415,22 @@ def _build_candidate_records(photos: list, thumb_dir: Path, make_thumbs: bool) -
         else:
             orientation = None
 
+        # Burst UUID from Mac Photos (identifies burst-mode sequences)
+        burst_uuid = None
+        try:
+            burst_uuid = getattr(p, "burst_uuid", None) or None
+        except Exception:
+            pass
+
+        # GPS coordinates for geo-proximity duplicate detection
+        gps = None
+        try:
+            loc = getattr(p, "location", None)
+            if loc and loc[0] is not None:
+                gps = {"lat": round(loc[0], 5), "lon": round(loc[1], 5)}
+        except Exception:
+            pass
+
         records.append({
             "uuid": p.uuid,
             "date": p.date.isoformat() if p.date else None,
@@ -326,6 +440,8 @@ def _build_candidate_records(photos: list, thumb_dir: Path, make_thumbs: bool) -
             "favorite": bool(getattr(p, "favorite", False)),
             "orientation": orientation,
             "aesthetic_score": score,
+            "burst_uuid": burst_uuid,
+            "gps": gps,
             "thumbnail_path": thumb_path,
         })
     return records
