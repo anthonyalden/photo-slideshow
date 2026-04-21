@@ -101,9 +101,9 @@ class _DatePicker(ttk.Frame):
         top = tk.Toplevel(self.winfo_toplevel())
         top.title("Select date")
         top.resizable(False, False)
-        top.grab_set()          # modal
-        top.attributes("-topmost", True)
         top.transient(self.winfo_toplevel())
+        top.lift()              # bring to front on macOS
+        top.focus_force()       # ensure keyboard focus
 
         cal = Calendar(
             top, selectmode="day",
