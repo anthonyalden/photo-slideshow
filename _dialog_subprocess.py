@@ -63,6 +63,78 @@ def _scrolled_text(parent, height: int, mono: bool = False, **kwargs) -> tk.Text
     return tv
 
 
+# ------------------------------------------------------------------ date picker
+
+class _DatePicker(ttk.Frame):
+    """A date field + calendar button that opens a modal Toplevel picker.
+    Works reliably on macOS where DateEntry dropdowns appear behind windows.
+    """
+    def __init__(self, parent, initial: datetime.date | None = None, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._date = initial or datetime.date.today()
+        self._var = tk.StringVar(value=self._date.isoformat())
+        self._entry = ttk.Entry(self, textvariable=self._var,
+                                width=11, state="readonly")
+        self._entry.pack(side="left")
+        self._btn = ttk.Button(self, text="\U0001f4c5", width=2,
+                               command=self._open_calendar)
+        self._btn.pack(side="left", padx=(2, 0))
+
+    def get_date(self) -> datetime.date:
+        return self._date
+
+    def config(self, **kw):  # type: ignore[override]
+        state = kw.pop("state", None)
+        super().config(**kw)
+        if state is not None:
+            # readonly keeps text readable; disabled greys it out
+            entry_state = "readonly" if state == "normal" else "disabled"
+            self._entry.config(state=entry_state)
+            self._btn.config(state=state)
+
+    def _open_calendar(self) -> None:
+        try:
+            from tkcalendar import Calendar
+        except ImportError:
+            return
+
+        top = tk.Toplevel(self.winfo_toplevel())
+        top.title("Select date")
+        top.resizable(False, False)
+        top.grab_set()          # modal
+        top.attributes("-topmost", True)
+        top.transient(self.winfo_toplevel())
+
+        cal = Calendar(
+            top, selectmode="day",
+            year=self._date.year,
+            month=self._date.month,
+            day=self._date.day,
+            date_pattern="yyyy-mm-dd",
+        )
+        cal.pack(padx=12, pady=12)
+
+        def _ok() -> None:
+            self._date = cal.selection_get()
+            self._var.set(self._date.isoformat())
+            top.destroy()
+
+        btns = ttk.Frame(top)
+        btns.pack(pady=(0, 10))
+        ttk.Button(btns, text="OK", command=_ok, width=8).pack(
+            side="left", padx=6)
+        ttk.Button(btns, text="Cancel", command=top.destroy, width=8).pack(
+            side="left", padx=6)
+
+        # Centre the popup over the main window
+        top.update_idletasks()
+        root = self.winfo_toplevel()
+        x = root.winfo_x() + (root.winfo_width() - top.winfo_width()) // 2
+        y = root.winfo_y() + (root.winfo_height() - top.winfo_height()) // 2
+        top.geometry(f"+{x}+{y}")
+        top.wait_window()
+
+
 # ------------------------------------------------------------------ main
 
 def main() -> None:
@@ -133,13 +205,7 @@ def main() -> None:
 
     scan_mode_var = tk.StringVar(value="count")
 
-    # Row 0: date range radio + date pickers
-    try:
-        from tkcalendar import DateEntry as _DateEntry
-        _HAS_CAL = True
-    except ImportError:
-        _HAS_CAL = False
-
+    # Row 0: date range radio + _DatePicker widgets
     ttk.Radiobutton(
         scan_frame, text="Limit by date range",
         variable=scan_mode_var, value="date_range",
@@ -149,56 +215,32 @@ def main() -> None:
     date_row = ttk.Frame(scan_frame)
     date_row.grid(row=0, column=1, sticky="w", pady=4, padx=(8, 0))
 
-    # "From" end — checkbox + date picker
+    # "From" end — optional checkbox + calendar button picker
     use_start_var = tk.BooleanVar(value=False)
     use_start_chk = ttk.Checkbutton(date_row, text="From:", variable=use_start_var,
                                     command=lambda: _toggle_date_ends())
     use_start_chk.pack(side="left")
-    if _HAS_CAL:
-        scan_start_picker = _DateEntry(date_row, date_pattern="yyyy-mm-dd", width=12,
-                                       state="disabled", background="#4a90d9",
-                                       foreground="white", borderwidth=2)
-        scan_start_picker.pack(side="left", padx=(4, 12))
-        scan_start_var = None  # value read via scan_start_picker.get()
-    else:
-        scan_start_var = tk.StringVar()
-        scan_start_picker = ttk.Entry(date_row, textvariable=scan_start_var,
-                                      width=12, state="disabled")
-        scan_start_picker.pack(side="left", padx=(4, 12))
+    scan_start_picker = _DatePicker(
+        date_row,
+        initial=datetime.date.today().replace(month=1, day=1),  # Jan 1 this year
+    )
+    scan_start_picker.pack(side="left", padx=(4, 12))
+    scan_start_picker.config(state="disabled")
 
-    # "To" end — checkbox + date picker
+    # "To" end — optional checkbox + calendar button picker
     use_end_var = tk.BooleanVar(value=True)
     use_end_chk = ttk.Checkbutton(date_row, text="To:", variable=use_end_var,
                                   command=lambda: _toggle_date_ends())
     use_end_chk.pack(side="left")
-    if _HAS_CAL:
-        import datetime as _dt_dlg
-        scan_end_picker = _DateEntry(date_row, date_pattern="yyyy-mm-dd", width=12,
-                                     background="#4a90d9", foreground="white",
-                                     borderwidth=2)
-        scan_end_picker.set_date(_dt_dlg.date.today())
-        scan_end_picker.pack(side="left", padx=(4, 0))
-        scan_end_var = None
-    else:
-        scan_end_var = tk.StringVar()
-        scan_end_picker = ttk.Entry(date_row, textvariable=scan_end_var, width=12)
-        scan_end_picker.pack(side="left", padx=(4, 0))
+    scan_end_picker = _DatePicker(date_row, initial=datetime.date.today())
+    scan_end_picker.pack(side="left", padx=(4, 0))
 
     ttk.Label(date_row, text="(uncheck to leave that end open)",
               foreground="#888").pack(side="left", padx=(10, 0))
 
-    def _get_date_str(picker, str_var) -> str | None:
-        """Return ISO date string from either a DateEntry or Entry widget."""
-        if _HAS_CAL:
-            return picker.get_date().isoformat()
-        val = str_var.get().strip()
-        return val or None
-
     def _toggle_date_ends() -> None:
-        s = "normal" if use_start_var.get() else "disabled"
-        e = "normal" if use_end_var.get() else "disabled"
-        scan_start_picker.config(state=s)
-        scan_end_picker.config(state=e)
+        scan_start_picker.config(state="normal" if use_start_var.get() else "disabled")
+        scan_end_picker.config(state="normal" if use_end_var.get() else "disabled")
 
     # Row 1: photo count radio + spinbox
     ttk.Radiobutton(
@@ -341,9 +383,9 @@ def main() -> None:
             params["_filter_spec"] = filter_spec
         if scan_mode_var.get() == "date_range":
             params["scan_date_range"] = {
-                "start": _get_date_str(scan_start_picker, scan_start_var)
+                "start": scan_start_picker.get_date().isoformat()
                          if use_start_var.get() else None,
-                "end":   _get_date_str(scan_end_picker, scan_end_var)
+                "end":   scan_end_picker.get_date().isoformat()
                          if use_end_var.get() else None,
             }
         else:
