@@ -89,21 +89,38 @@ def prompt_to_filter_spec(prompt: str, target_count: int, current_date: str) -> 
 
 # --------------------------------------------------------------- Stage 2: curate
 
-_CURATE_SYSTEM = """You curate photo slideshows.
+_CURATE_SYSTEM = """\
+You are an expert photo editor and slideshow curator. You will be given a set of
+candidate photos (thumbnails + metadata) and asked to select the best ones for a
+slideshow presentation.
 
-Given the user's intent and a set of candidate photos (metadata and, if provided, thumbnails), select the best ones and order them for a slideshow with good narrative flow.
+Your work has TWO PHASES — do them in order:
 
-Guidelines:
-- Match the user's stated intent first; quality and variety second.
-- Avoid near-duplicates (same scene, same second, similar composition).
-- Prefer a rhythm: establishing shot → detail → people → scene → detail → closer.
-- Keep people-heavy and landscape-heavy shots balanced unless intent says otherwise.
-- Respect the target count. If fewer strong matches exist, return fewer.
+PHASE 1 — EXAMINE
+Before selecting anything, review every single photo provided. For each one assess:
+  • Composition — framing, rule of thirds, leading lines, horizon level, clutter
+  • Exposure — brightness, contrast, shadow/highlight detail, colour accuracy
+  • Sharpness — focus on the main subject; motion blur that hurts the image
+  • Content — does it clearly relate to the slideshow subject?
+  • Duplicates — flag near-duplicates (same scene / moment / composition);
+    keep a mental note of which is the strongest of each group
 
-Return ONLY a JSON object, no prose, no fences:
+PHASE 2 — SELECT
+After examining everything, choose the best photos and arrange them for the
+slideshow. Rules:
+  • Eliminate near-duplicates — include only the single best from each group
+  • Rank by technical quality first (sharp, well-exposed, well-composed)
+  • Match the slideshow subject and the user’s stated intent
+  • Create narrative flow: wide/establishing shots → details → people →
+    action → atmosphere → closing shot
+  • Aim for variety — avoid consecutive shots that look too similar
+  • Hit the target count; return fewer only if not enough strong matches exist
+
+Return ONLY a JSON object — no prose, no markdown fences:
 {"selected_uuids": [string], "rationale": string}
 
-selected_uuids must be in playback order."""
+selected_uuids must be in intended slideshow playback order.
+"""
 
 
 def curate_photos(
@@ -121,20 +138,33 @@ def curate_photos(
     """
     client = get_client()
 
+    # ---- opening context block ------------------------------------------------
     content: list[dict] = [{
         "type": "text",
         "text": (
-            f"USER_PROMPT: {prompt}\n"
-            f"TARGET_COUNT: {target_count}\n"
-            f"CANDIDATES: {len(candidates)} total, listed below.\n"
+            f"SLIDESHOW SUBJECT: {prompt}\n"
+            f"PURPOSE: A photo slideshow presentation about \"{prompt}\"\n"
+            f"TARGET PHOTO COUNT: {target_count}\n"
+            f"TOTAL CANDIDATES TO EXAMINE: {len(candidates)}\n\n"
+            f"PHASE 1 — Please examine ALL {len(candidates)} photos below "
+            "before making any selection. Each entry shows the photo\'s "
+            "metadata followed by its thumbnail image (when available). "
+            "Assess composition, exposure, sharpness, content relevance, "
+            "and flag near-duplicates as you go.\n\n"
+            "CANDIDATE PHOTOS:"
         ),
     }]
 
+    # ---- one entry per candidate: metadata + thumbnail -------------------------
     for i, c in enumerate(candidates):
         meta = {k: v for k, v in c.items() if k != "thumbnail_path"}
         content.append({
             "type": "text",
-            "text": f"--- #{i} uuid={c['uuid']} ---\n{json.dumps(meta, default=str)}",
+            "text": (
+                f"\n--- Photo #{i + 1} of {len(candidates)} "
+                f"| uuid: {c['uuid']} ---\n"
+                f"{json.dumps(meta, default=str)}"
+            ),
         })
         if use_vision and c.get("thumbnail_path"):
             try:
@@ -150,11 +180,27 @@ def curate_photos(
             except Exception:
                 pass
 
+    # ---- PHASE 2 instruction ---------------------------------------------------
     content.append({
         "type": "text",
         "text": (
-            f"\nSelect up to {target_count} in playback order. "
-            "Return JSON only."
+            f"\n\nPHASE 2 — SELECTION\n"
+            f"You have now examined all {len(candidates)} candidate photos. "
+            f"Select the best {target_count} for a slideshow presentation "
+            f"about \"{prompt}\".\n\n"
+            "Apply these criteria in order:\n"
+            "1. Eliminate near-duplicates — keep only the single best of each "
+            "similar group (best composition, sharpest focus, best exposure).\n"
+            "2. Prioritise technical quality: sharp focus on subject, correct "
+            "exposure (not blown out or crushed), strong composition.\n"
+            "3. Match the slideshow subject and user intent.\n"
+            "4. Arrange for narrative flow and variety — no two consecutive "
+            "photos should look nearly identical.\n\n"
+            f"Return exactly {target_count} UUIDs (or fewer if fewer strong "
+            "matches exist), in intended playback order.\n"
+            "Return ONLY JSON: "
+            '{"selected_uuids": [\"uuid1\", \"uuid2\", ...], '
+            '"rationale": \"brief explanation\"}'
         ),
     })
 
