@@ -66,8 +66,8 @@ def _scrolled_text(parent, height: int, mono: bool = False, **kwargs) -> tk.Text
 # ------------------------------------------------------------------ date picker
 
 class _DatePicker(ttk.Frame):
-    """A date field + calendar button that opens a modal Toplevel picker.
-    Works reliably on macOS where DateEntry dropdowns appear behind windows.
+    """A date field + 📅 button that opens a modal Toplevel calendar picker.
+    Uses a Toplevel (not a dropdown) so it works reliably on macOS.
     """
     def __init__(self, parent, initial: datetime.date | None = None, **kwargs):
         super().__init__(parent, **kwargs)
