@@ -136,6 +136,7 @@ def curate_photos(
     candidates: list[dict],
     target_count: int,
     use_vision: bool = True,
+    curation_prompt: str | None = None,
 ) -> tuple[list[str], str]:
     """
     Returns (ordered_uuids, rationale).
@@ -143,25 +144,33 @@ def curate_photos(
     Each candidate dict should contain:
       uuid, date, place, persons, keywords, favorite, orientation,
       score (aesthetic 0–1 or None), thumbnail_path (str or None)
+
+    curation_prompt: when provided (user-edited natural-language prompt),
+      replaces the auto-generated opening context block.
     """
     client = get_client()
 
     # ---- opening context block ------------------------------------------------
-    content: list[dict] = [{
-        "type": "text",
-        "text": (
+    if curation_prompt:
+        # User-supplied natural-language prompt (shown and edited in the dialog).
+        opening = (
+            f"{curation_prompt}\n\n"
+            f"CANDIDATE PHOTOS ({len(candidates)} total — examine every one):"
+        )
+    else:
+        opening = (
             f"SLIDESHOW SUBJECT: {prompt}\n"
             f"PURPOSE: A photo slideshow presentation about \"{prompt}\"\n"
             f"TARGET PHOTO COUNT: {target_count}\n"
             f"TOTAL CANDIDATES TO EXAMINE: {len(candidates)}\n\n"
             f"PHASE 1 — Please examine ALL {len(candidates)} photos below "
-            "before making any selection. Each entry shows the photo\'s "
+            "before making any selection. Each entry shows the photo's "
             "metadata followed by its thumbnail image (when available). "
             "Assess composition, exposure, sharpness, content relevance, "
             "and flag near-duplicates as you go.\n\n"
             "CANDIDATE PHOTOS:"
-        ),
-    }]
+        )
+    content: list[dict] = [{"type": "text", "text": opening}]
 
     # ---- one entry per candidate: metadata + thumbnail -------------------------
     for i, c in enumerate(candidates):

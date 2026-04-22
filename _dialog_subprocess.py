@@ -304,71 +304,72 @@ def main() -> None:
     # ── SEPARATOR ─────────────────────────────────────────────────────────────
     ttk.Separator(outer, orient="horizontal").pack(fill="x", pady=10)
 
-    # ── FILTER SPEC ───────────────────────────────────────────────────────────
+    # ── CURATION PROMPT ──────────────────────────────────────────────────────
     ttk.Label(
         outer,
-        text="Filter Spec sent to Photos  (editable)",
+        text="Curation Prompt  (editable — sent to Claude with your photos)",
         font=("-size", 13, "-weight", "bold"),
     ).pack(anchor="w")
     ttk.Label(
         outer,
-        text="Click \"Preview Filter\" to generate this from your prompt, then edit freely before generating.",
+        text='Click “Build Prompt” to generate from your description, then edit freely before generating.',
         foreground="#888",
         wraplength=580,
         justify="left",
     ).pack(anchor="w", pady=(2, 6))
 
-    filter_frame = ttk.LabelFrame(outer, text="Filter JSON", padding=4)
-    filter_frame.pack(fill="both", expand=True)
-    filter_text = _scrolled_text(filter_frame, height=8, mono=True)
+    curation_frame = ttk.LabelFrame(outer, text="Prompt sent to Claude", padding=4)
+    curation_frame.pack(fill="both", expand=True)
+    curation_text = _scrolled_text(curation_frame, height=8)
 
-    # ── STATUS ────────────────────────────────────────────────────────────────
+    # ── STATUS ─────────────────────────────────────────────────────────────
     status_var = tk.StringVar(
-        value='Click "Preview Filter" to inspect the filter, or go straight to Generate.'
+        value='Click “Build Prompt” to preview what is sent to Claude, or go straight to Generate.'
     )
     status_lbl = ttk.Label(
         outer, textvariable=status_var, foreground="#555", wraplength=580, justify="left"
     )
     status_lbl.pack(anchor="w", pady=(8, 4))
 
-    # ── BUTTONS ───────────────────────────────────────────────────────────────
+    # ── BUTTONS ─────────────────────────────────────────────────────────────
     btn_row = ttk.Frame(outer)
     btn_row.pack(fill="x", pady=(4, 0))
 
-    # -- Preview Filter --------------------------------------------------------
-    def do_preview() -> None:
+    # -- Build Prompt (instant — no API call) ------------------------------------
+    def do_build_prompt() -> None:
         prompt = prompt_text.get("1.0", "end").strip()
         if not prompt:
-            status_var.set("⚠️  Enter a prompt first.")
+            status_var.set("⚠️  Enter a description first.")
             return
-        preview_btn.config(state="disabled")
-        generate_btn.config(state="disabled")
-        status_var.set("⏳  Calling Claude to generate filter spec…")
-
-        def bg() -> None:
-            try:
-                from claude_client import prompt_to_filter_spec  # noqa: PLC0415
-                spec = prompt_to_filter_spec(
-                    prompt=prompt,
-                    target_count=int(max_var.get()),
-                    current_date=datetime.date.today().isoformat(),
-                )
-                spec_json = json.dumps(spec, indent=2)
-                root.after(0, lambda s=spec_json: _preview_done(s, None))
-            except Exception as exc:  # noqa: BLE001
-                root.after(0, lambda e=exc: _preview_done(None, e))
-
-        threading.Thread(target=bg, daemon=True).start()
-
-    def _preview_done(spec_json: str | None, error: Exception | None) -> None:
-        preview_btn.config(state="normal")
-        generate_btn.config(state="normal")
-        if error:
-            status_var.set(f"⚠️  {error}")
-        else:
-            filter_text.delete("1.0", "end")
-            filter_text.insert("1.0", spec_json)
-            status_var.set("✅  Filter spec ready — edit if needed, then Generate.")
+        n = int(max_var.get())
+        augmented = (
+            f'I am creating a slideshow presentation about:\n'
+            f'  "{prompt}"\n\n'
+            f'Please examine ALL the candidate photos provided below and select '
+            f'the best {n} for this slideshow.\n\n'
+            f'WHAT I\'M LOOKING FOR:\n'
+            f'\u2022 Photos that clearly match the subject: {prompt}\n'
+            f'\u2022 People / portraits — human subjects add warmth and story to slideshows\n'
+            f'\u2022 Technical quality: sharp focus on the main subject, correct exposure, '
+            f'strong composition\n'
+            f'\u2022 Variety: a mix of wide/establishing shots, close-up details, '
+            f'people, and atmospheric scenes\n\n'
+            f'WHAT TO EXCLUDE:\n'
+            f'\u2022 Near-duplicates — photos sharing the same scene_group number were '
+            f'taken within seconds of each other (burst mode or rapid-fire). '
+            f'Keep only the single BEST from each group.\n'
+            f'\u2022 Blurry, over/under-exposed, or poorly composed photos\n'
+            f'\u2022 Photos that do not relate to the stated subject\n\n'
+            f'PLAYBACK ORDER:\n'
+            f'Arrange the selected photos for a smooth, engaging slideshow:\n'
+            f'  wide establishing shot \u2192 scene details \u2192 people/portraits \u2192 '
+            f'action/events \u2192 atmosphere \u2192 memorable closing image\n\n'
+            f'No two consecutive photos should be from the same scene_group, '
+            f'location, or visual theme.'
+        )
+        curation_text.delete("1.0", "end")
+        curation_text.insert("1.0", augmented)
+        status_var.set("✅  Curation prompt ready — edit if needed, then Generate.")
 
     # -- Cancel ----------------------------------------------------------------
     def do_cancel() -> None:
@@ -378,17 +379,12 @@ def main() -> None:
     def do_generate() -> None:
         prompt = prompt_text.get("1.0", "end").strip()
         if not prompt:
-            status_var.set("⚠️  Enter a prompt first.")
+            status_var.set("⚠️  Enter a description first.")
             return
 
-        filter_spec = None
-        raw = filter_text.get("1.0", "end").strip()
-        if raw:
-            try:
-                filter_spec = json.loads(raw)
-            except json.JSONDecodeError:
-                status_var.set("⚠️  Invalid JSON in filter spec — fix or clear it.")
-                return
+        # Use curation prompt if the user built/edited one; otherwise pipeline
+        # will auto-generate from the prompt.
+        curation_prompt = curation_text.get("1.0", "end").strip() or None
 
         params: dict = {
             "prompt": prompt,
@@ -397,8 +393,8 @@ def main() -> None:
             "visual_curation": bool(visual_var.get()),
             "scan_mode": scan_mode_var.get(),
         }
-        if filter_spec is not None:
-            params["_filter_spec"] = filter_spec
+        if curation_prompt:
+            params["_curation_prompt"] = curation_prompt
         # Random is available for both modes
         params["random_sample"] = bool(random_var.get())
         params["random_pick_count"] = int(random_pick_var.get())
@@ -416,8 +412,8 @@ def main() -> None:
         result.update(params)
         root.destroy()
 
-    preview_btn = ttk.Button(btn_row, text="Preview Filter", command=do_preview)
-    preview_btn.pack(side="left")
+    build_btn = ttk.Button(btn_row, text="Build Prompt", command=do_build_prompt)
+    build_btn.pack(side="left")
 
     generate_btn = ttk.Button(btn_row, text="Generate", command=do_generate)
     generate_btn.pack(side="right")

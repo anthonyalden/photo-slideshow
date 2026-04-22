@@ -32,16 +32,28 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
     visual_curation: bool = bool(params.get("visual_curation", True))
 
     # ---- 1. Filter spec ----------------------------------------------------
-    progress("🧠")
-    if "_filter_spec" in params:
-        # User previewed and (optionally) edited the spec in the dialog.
-        spec = params["_filter_spec"]
+    # When the user has provided a curation prompt, skip the Claude filter-spec
+    # call entirely and query Photos directly via text/keyword search.
+    curation_prompt: str | None = params.get("_curation_prompt")
+
+    if curation_prompt:
+        # Build a minimal spec so the scan-limit logic below still works.
+        spec: dict = {
+            "date_range": None,
+            "media_type": "any",
+            "limit_candidates": max_photos * 4,
+        }
+        progress("🔎")  # skip the 🧠 step
     else:
-        spec = prompt_to_filter_spec(
-            prompt=prompt,
-            target_count=max_photos,
-            current_date=_dt.date.today().isoformat(),
-        )
+        progress("🧠")
+        if "_filter_spec" in params:
+            spec = params["_filter_spec"]
+        else:
+            spec = prompt_to_filter_spec(
+                prompt=prompt,
+                target_count=max_photos,
+                current_date=_dt.date.today().isoformat(),
+            )
 
     # ---- 2. Query Photos library ------------------------------------------
     progress("🔎")
@@ -117,6 +129,7 @@ def run_pipeline(params: dict, output_dir: Path, on_progress: ProgressFn = None)
                 candidates=records,
                 target_count=max_photos,
                 use_vision=visual_curation,
+                curation_prompt=curation_prompt,
             )
 
         by_uuid = {p.uuid: p for p in photos}
