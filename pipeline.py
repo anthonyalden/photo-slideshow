@@ -401,6 +401,10 @@ def _build_candidate_records(photos: list, thumb_dir: Path, make_thumbs: bool) -
     except ImportError as exc:
         raise RuntimeError("Pillow is required: pip install Pillow") from exc
 
+    # Raise Pillow's decompression-bomb limit for our own trusted local photos.
+    # The default (89MP) is too low for modern high-res iPhone panoramas.
+    Image.MAX_IMAGE_PIXELS = 300_000_000
+
     records: list[dict] = []
     for i, p in enumerate(photos):
         thumb_path: Optional[str] = None

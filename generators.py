@@ -292,10 +292,22 @@ def _generate_album(photos, output_dir: Path, base_name: str, prompt: str) -> Pa
     album_name = _album_title(prompt)
 
     script = _build_applescript(album_name, uuids)
-    result = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True, text=True,
-    )
+    # Write the script to a temp file to avoid the OS argument-list length limit
+    # that hits when passing a long script via osascript -e "..."
+    import tempfile
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".applescript", delete=False, encoding="utf-8"
+    ) as tf:
+        tf.write(script)
+        tf_path = tf.name
+    try:
+        result = subprocess.run(
+            ["osascript", tf_path],
+            capture_output=True, text=True,
+        )
+    finally:
+        import os as _os
+        _os.unlink(tf_path)
     if result.returncode != 0:
         raise RuntimeError(
             "Could not create album in Photos.app.\n"
