@@ -1,15 +1,17 @@
 # Photo Slideshow
 
-A macOS menu bar app that reads your Photos library, uses Claude to turn a
-natural-language prompt into a filter + curation decision, and produces a
-slideshow in the format of your choice.
+A macOS menu bar app that reads your Photos library, uses Claude AI to intelligently
+curate photos, and produces a slideshow in the format of your choice.
 
 ```
-You: "sunset shots from our Morocco trip, me and my wife, no selfies"
-  ↓  (Claude Sonnet → filter spec)
-osxphotos query against Photos.app SQLite catalog
-  ↓  (Claude Opus w/ vision → selection + ordering)
-MP4 | PPTX/Keynote | HTML | Photos album
+You: "sunset shots from our Morocco trip, me and my wife"
+  ↓  text/keyword search of Photos library
+  ↓  Claude Opus (vision) — examines every candidate photo
+        • composition  • exposure  • sharpness  • people shots
+        • eliminates burst/duplicate sequences (scene_group)
+        • arranges for narrative flow
+  ↓
+MP4 | PPTX/Keynote | HTML | Photos Album
 ```
 
 ## Install
@@ -19,52 +21,73 @@ cd photo_slideshow
 ./install.sh
 ```
 
-Set your API key in `~/.zshrc`:
+Add your Anthropic API key to `~/.zshrc` (or `~/.zprofile` for login shells):
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Optional but recommended:
+MP4 output requires ffmpeg:
 ```bash
-brew install ffmpeg   # required for MP4 output
+brew install ffmpeg
 ```
 
 ## Permissions (one-time)
 
-macOS will prompt for these the first time each is needed:
+macOS will prompt the first time each permission is needed:
 
-1. **Full Disk Access** for your terminal (or for `python` if launched another way).
-   *Required so osxphotos can read `~/Pictures/Photos Library.photoslibrary`.*
-   System Settings → Privacy & Security → Full Disk Access → add Terminal.
+1. **Full Disk Access** — required so osxphotos can read the Photos library.
+   System Settings → Privacy & Security → Full Disk Access → add Terminal (or Warp).
 
-2. **Automation → Photos**, only if you use the "Photos Album" output format.
-   *Granted via a permission prompt the first time an album is created.*
+2. **Automation → Photos** — only needed for the "Photos Album" output format.
+   Granted automatically the first time an album is created.
 
-3. **Notifications** (optional). Only works if you bundle as a .app via py2app.
+3. **Notifications** — optional; only fires if bundled as a `.app` via py2app.
 
 ## Run
 
 ### Menu bar app
+
 ```bash
 source .venv/bin/activate
 python main.py
 ```
-Click 📸 → **New Slideshow…** to open the dialog window.
+
+A 📸 icon appears in your menu bar. Click it → **New Slideshow…** to open the dialog.
 
 #### Dialog window fields
-- **Prompt** — describe your slideshow in natural language (scrollable text box).
-- **Output format** — dropdown: MP4, Keynote/PPTX, HTML, Photos Album.
-- **Max photos** — spinbox, default 40.
-- **Visual curation** — checkbox; uncheck for faster/cheaper text-only curation.
-- **Filter JSON** (editable) — click **Preview Filter** to call Claude and see the
-  exact filter spec that will be sent to your Photos library. Edit it freely
-  before clicking **Generate** — useful for debugging or fine-tuning results.
-- **Generate** (`Cmd+Return`) — runs the pipeline with the current settings.
-  If the Filter JSON box is populated, that spec is used directly (skipping
-  the first Claude call and saving ~$0.005).
+
+**Prompt**
+Describe the slideshow in natural language — e.g. *"our Morocco trip, sunset shots,
+me and my wife"*.
+
+**Options**
+- *Output format* — MP4, Keynote/PPTX, HTML, Photos Album
+- *Max photos* — target slideshow length (default 40)
+- *Visual curation* — checked by default; uses Claude vision to examine thumbnails.
+  Uncheck for faster/cheaper text-only selection.
+
+**Scan Limit**
+Controls how many photos are pulled from your library as candidates:
+- *Limit by date range* — click the 📅 buttons to choose From/To dates.
+  Scans every photo in the window (no count cap). Uncheck either end for an open range.
+- *Limit by photo count* — scan up to N photos from the library (default 400).
+
+**Random** (applies to both scan modes)
+When checked, matched photos are shuffled before curation so you get a different
+selection each run. Set the "pick N random" count independently of the scan limit.
+
+**Curation Prompt** (editable — sent to Claude with your photos)
+Click **Build Prompt** to generate a full natural-language instruction from your
+description. This tells Claude exactly what to look for and why. Read and edit it
+before generating — useful for adding specific people, adjusting tone, or adding
+constraints. When populated, the pipeline skips the Claude filter-spec step (faster).
+
+**Generate** (`Cmd+Return`) — runs the full pipeline.
 
 ### CLI (for Shortcuts, Raycast, Alfred)
+
 ```bash
+source .venv/bin/activate
 python cli.py "favorites from Colorado trips, landscape orientation" \
     --format html --max 30
 ```
@@ -72,158 +95,167 @@ python cli.py "favorites from Colorado trips, landscape orientation" \
 Flags:
 - `--format {mp4,pptx,html,album}` (default `mp4`)
 - `--max N` — target slideshow length (default 40)
-- `--no-vision` — skip Opus vision curation (cheaper/faster, text-only)
+- `--no-vision` — skip vision curation (cheaper/faster, text-only)
 - `--output-dir PATH` — default `~/Pictures/PhotoSlideshows`
-- `--prompt-file PATH` — read prompt from a file (useful for multi-line)
+- `--prompt-file PATH` — read prompt from a file
 
-The CLI prints the resulting file path on stdout, which plays nicely with
-Shortcuts' "Run Shell Script" action.
+The CLI prints the output file path on stdout — works well with Shortcuts'
+"Run Shell Script" → "Open File" flow.
 
-### macOS Shortcut wrapping
+### macOS Shortcut
 
-Create a Shortcut with:
-1. **Ask for Input** (text) — "What kind of slideshow?"
+1. **Ask for Input** — "What kind of slideshow?"
 2. **Run Shell Script**
    ```bash
    cd ~/path/to/photo_slideshow
    source .venv/bin/activate
    python cli.py "$1" --format mp4
    ```
-   Pass input: as arguments.
 3. **Open File** — using the stdout path.
 
-Assign a global shortcut key in System Settings → Keyboard → Keyboard Shortcuts → Services.
+Assign a global hotkey in System Settings → Keyboard → Keyboard Shortcuts → Services.
 
 ## How it works
 
-1. **Filter spec** (`claude-sonnet-4-6`, text-only). Your prompt is converted
-   into a structured JSON filter: date range, albums, keywords, persons,
-   places, orientation, favorites, limits. You can preview and edit this spec
-   in the dialog before generating.
-2. **Photos query** via `osxphotos.PhotosDB().query(...)`. Returns up to
-   `target × 4` candidates (capped at 400).
-   
-   **Automatic fallback** — if the strict filter returns nothing (common when
-   photos lack GPS location data), the pipeline retries with two progressively
-   looser strategies:
-   - *Album/keyword fallback*: replaces the `places` filter with album and
-     keyword substring searches using the significant words from your prompt.
-     Finds photos in an album called "Morocco" even without GPS tagging.
-   - *Text-search fallback*: loads all photos in the original date range and
-     scores each one by how many prompt words appear in its place name,
-     keywords, album names, or filename. Returns the best matches.
-3. **Curation** (`claude-opus-4-7` with vision by default). Thumbnails are
-   downsized to 512px max-edge and sent alongside metadata. Claude returns
-   an ordered UUID list plus rationale.
-4. **Generation**:
-   - **MP4**: ffmpeg concat demuxer; 4s per image, 1920×1080 letterboxed,
-     libx264/crf 20, 30fps.
-   - **PPTX**: `python-pptx`, 16:9, black background, opens cleanly in Keynote.
-   - **HTML**: self-contained folder (`..._assets/`) + single HTML file with
-     fade transitions, keyboard nav, fullscreen.
-   - **Photos Album**: AppleScript creates a new album in Photos.app — use
-     native slideshow (File → Play Slideshow).
+### 1. Photo query
+Your prompt words search the Photos library via `osxphotos.PhotosDB().query(...)`,
+respecting the Scan Limit you chose.
+
+**Automatic fallback** — if the query returns nothing (common without GPS data):
+1. *Keyword OR album search* — separate keyword and album substring searches (OR logic)
+2. *Text-search* — scores photos by how many prompt words appear in metadata
+3. *Vision fallback* — when visual curation is on, returns a broad pool for Claude
+   to identify matches visually
+
+### 2. Scene group tagging
+Before curation, every candidate photo gets a `scene_group` integer:
+- Photos with the same `burst_uuid` (Mac Photos burst sequences) share a group
+- Photos taken within 10 seconds at the same GPS location share a group
+- Photos taken within 5 seconds with no GPS also share a group
+
+Claude is explicitly told: **pick at most ONE photo per scene_group.**
+
+### 3. Curation (Claude Opus with vision)
+Thumbnails are downsized to 512 px and sent with metadata. Claude runs in two phases:
+
+**Phase 1 — Examine every candidate:**
+composition, exposure, sharpness, content relevance, people shots, near-duplicates
+
+**Phase 2 — Select:**
+1. Eliminate near-duplicates — keep only the best of each scene_group
+2. Technical quality: sharp, well-exposed, well-composed
+3. Include people/portrait shots
+4. Narrative flow: establishing → details → people → atmosphere → strong close
+5. Variety — no two consecutive photos from same scene or location
+
+### 4. Generation
+- **MP4**: ffmpeg; 4 s/image, 1920×1080 letterboxed, libx264/crf 20, 30 fps
+- **PPTX**: python-pptx, 16:9, black background, opens in Keynote
+- **HTML**: `_assets/` folder + HTML file with fade transitions, keyboard nav, fullscreen
+- **Photos Album**: AppleScript (written to a temp file to avoid argument-list limits)
+  creates a new album — play with File → Play Slideshow
 
 ## Cost per slideshow (rough)
 
-Assuming 40-photo output from ~160 candidates:
-- Stage 1 (filter spec): ~$0.005
-- Stage 2 with vision: ~$0.15–0.40 depending on thumbnail count.
-- Stage 2 without vision (`--no-vision`): ~$0.01.
+Assuming 40-photo output from ~160 candidates with visual curation:
+- With **Build Prompt** (no filter-spec call): ~$0.15–0.40
+- Without Build Prompt (filter-spec included): ~$0.155–0.405
+- With `--no-vision`: ~$0.01
 
 ## Troubleshooting
 
 **"No photos matched those filters"**
-- The app now retries automatically with album/keyword and text-search
-  fallbacks before giving up — so this error only appears if all three
-  strategies found nothing.
-- Use **Preview Filter** in the dialog to see the generated JSON and edit it
-  (e.g. remove a `places` filter and add an `albums` filter manually).
-- Ensure your trip photos are in a named album or have keywords applied in
-  Photos.app — place-based filtering requires GPS location metadata.
-- Check osxphotos directly: `osxphotos query --uuid-only | wc -l`.
+- Three fallback strategies run automatically before giving up.
+- Ensure photos are in a named album or have keywords in Photos.app —
+  place-based search requires GPS metadata.
+- Check your library: `osxphotos query --uuid-only | wc -l`
 - Confirm Full Disk Access is granted.
 
+**Burst shots still appearing**
+- Keep Visual Curation checked — Claude needs thumbnails to apply scene_group rules.
+- `--no-vision` uses text-only metadata and may not deduplicate as aggressively.
+
 **"iCloud-only" photos missing from MP4/PPTX/HTML**
-- Those formats need the original file on disk. Either enable "Download
-  Originals to this Mac" in Photos preferences, or use the **Photos Album**
-  format which works purely off UUIDs.
+- Enable "Download Originals to this Mac" in Photos preferences, or use
+  **Photos Album** format (works purely off UUIDs).
 
 **AppleScript error creating album**
-- Grant Terminal (or Python) Automation permission for Photos:
-  System Settings → Privacy & Security → Automation.
+- Grant Automation permission: System Settings → Privacy & Security → Automation.
 
-**ffmpeg "Invalid argument" or crashes**
-- Usually a weird image file. Check stderr output; the code already skips
-  unreadable images but will abort if ffmpeg itself rejects a frame.
+**ffmpeg crashes or "Invalid argument"**
+- Usually a corrupt image file. Check stderr for the filename.
 
 **Model / API errors**
-- Check `ANTHROPIC_API_KEY` is set in the shell actually running the app.
-- Menu bar apps inherit the environment of the shell they're launched from;
-  if you launch from Finder, set the key in `~/.zprofile` (login shells).
+- Verify `ANTHROPIC_API_KEY` is set in the shell running the app.
+- If launched from Finder, set the key in `~/.zprofile` (login shells).
+
+**DecompressionBombWarning (Pillow)**
+- Not an error — the image size limit is raised automatically to 300 MP for
+  high-res iPhone photos and panoramas.
 
 ## Testing
 
-Run the test suite (no API key or Photos library required — all external calls are mocked):
+All tests run without an API key or Photos library (external calls are mocked):
 
 ```bash
 source .venv/bin/activate
 python test_slideshow.py
 ```
 
-19 tests across three classes:
+41 tests across 9 classes:
 
-- **`TestDatePicker`** (7 tests) — `_DatePicker` widget: default and custom dates, ISO
-  display string, enable/disable state, Jan-1 default for the From picker.
-- **`TestParseJsonLoose`** (5 tests) — `_parse_json_loose`: clean JSON, trailing prose
-  after the object, multiple JSON objects in one response, code-fenced JSON,
-  realistic filter spec shape.
-- **`TestPipelineScanModes`** (7 tests) — `run_pipeline` scan limit logic: date range
-  patches the spec and sets limit to 50,000; count mode uses `scan_limit`; minimum
-  clamp to `max_photos`; legacy default cap of 400; `random_sample` flag; open-ended
-  date range (both ends `None`).
+| Class | Tests | What's covered |
+|---|---|---|
+| `TestDatePicker` | 7 | Widget state, defaults, ISO display, Jan-1 default |
+| `TestParseJsonLoose` | 5 | Trailing prose, code fences, multi-object responses |
+| `TestPipelineScanModes` | 7 | Date range, count, random, open range, defaults |
+| `TestSceneGroups` | 6 | Burst UUID, time-proximity (5 s/10 s), geo, solo |
+| `TestCurationPromptWorkflow` | 3 | Skips filter spec, passes curation_prompt to Claude |
+| `TestAlbumGeneration` | 2 | Temp file used, AppleScript contains all UUIDs |
+| `TestPillowLimit` | 1 | MAX_IMAGE_PIXELS raised to 300 MP |
+| `TestRandomSampling` | 2 | Trims to pick count, photos are subset of matched |
+| `TestFallbackQuery` | 3 | OR logic, no AND, returns empty when nothing matches |
 
 ## File layout
 
 ```
 photo_slideshow/
-├── main.py                  # rumps menu bar app
+├── main.py                  # rumps menu bar app (📸 icon)
 ├── dialog.py                # subprocess launcher for the dialog window
 ├── _dialog_subprocess.py    # Tkinter window UI (runs in its own process)
 ├── cli.py                   # command-line entry point
-├── pipeline.py              # orchestrator: filter → query → curate → generate
-├── claude_client.py         # Anthropic API wrappers
-├── generators.py            # mp4 / pptx / html / album
-├── test_slideshow.py        # unit + integration test suite
+├── pipeline.py              # orchestrator: query → scene-group → curate → generate
+├── claude_client.py         # Anthropic API wrappers (filter spec + curation)
+├── generators.py            # mp4 / pptx / html / album output
+├── test_slideshow.py        # 41-test unit + integration suite
 ├── requirements.txt
 ├── install.sh
 └── README.md
 ```
 
-> **Why a subprocess for the dialog?** Tkinter and rumps both require control
-> of the macOS main thread. Running the dialog in a child process gives it an
-> isolated event loop with no conflict.
+> **Why a subprocess for the dialog?** Tkinter and rumps both need the macOS
+> main thread. Running the dialog in a child process gives it an isolated event
+> loop with no conflict.
 
 ## Tweak points
 
 - **Slide duration / transitions** — `generators.py` → `_generate_mp4` (`DURATION`, `FPS`)
-  and `_render_html` (`INTERVAL` const in JS).
-- **Target aspect** — change `TARGET` in `_generate_mp4` to 1080×1920 for vertical,
-  or 1080×1080 for square.
-- **Curation prompt** — `claude_client.py` → `_CURATE_SYSTEM`. Bias toward drama,
-  variety, chronology, etc.
-- **Max candidates** — `pipeline.py` → the `400` cap in `run_pipeline`.
-- **Thumbnail size for vision** — `pipeline.py` → `_build_candidate_records`
-  (`img.thumbnail((512, 512))`). Smaller = cheaper but Claude sees less.
+  and `_render_html` (`INTERVAL` constant in JS).
+- **Aspect ratio** — change `TARGET` in `_generate_mp4` to `(1080, 1920)` for
+  vertical or `(1080, 1080)` for square.
+- **Curation system prompt** — `claude_client.py` → `_CURATE_SYSTEM`. Adjust
+  emphasis on drama, chronology, location variety, etc.
+- **Thumbnail size** — `pipeline.py` → `_build_candidate_records` →
+  `img.thumbnail((512, 512))`. Smaller = cheaper; larger = Claude sees more detail.
+- **Scan limit default** — `pipeline.py` → the `400` cap in the `else` branch of
+  the scan-mode block.
 
-## Bundling as a proper .app (optional)
-
-For notifications and a proper macOS app icon:
+## Bundling as a .app (optional)
 
 ```bash
 pip install py2app
-python setup.py py2app     # (you'd write a small setup.py)
+# write a minimal setup.py, then:
+python setup.py py2app
 ```
 
-Not included here to keep the scope lean. The plain `python main.py`
-invocation works fine for everyday use.
+Not included to keep the scope lean. `python main.py` works fine for everyday use.
